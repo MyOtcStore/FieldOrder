@@ -11,26 +11,37 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
-  const q = req.query.q || '';
-  if (!q) return res.status(400).json({ error: 'Query required' });
+  const q = (req.query.q || '').replace(/"/g, '');
+  const collectionId = req.query.collection_id || '';
 
-  // Use GraphQL to get products + pharmacy price metafield in one call
+  let queryFilter = '';
+  if (collectionId) {
+    // Filter by collection using collection_id in query
+    queryFilter = `query: "collection_id:${collectionId}"`;
+  } else if (q) {
+    queryFilter = `query: "${q}"`;
+  }
+
+  // Read local_price from product-level custom metafield
   const gql = `{
-    products(first: 20, query: "${q.replace(/"/g, '')}") {
+    products(first: 50, ${queryFilter}) {
       edges {
         node {
           id
           title
           featuredImage { url }
+          localPrice: metafield(namespace: "custom", key: "local_price") {
+            value
+          }
+          caseSize: metafield(namespace: "custom", key: "case_size") {
+            value
+          }
           variants(first: 1) {
             edges {
               node {
                 id
                 price
                 barcode
-                metafield(namespace: "pharmacy", key: "price") {
-                  value
-                }
               }
             }
           }
@@ -52,13 +63,13 @@ export default async function handler(req, res) {
 
   const products = edges.map(({ node: p }) => {
     const variant = p.variants.edges[0]?.node;
-    // Extract numeric ID from gid://shopify/ProductVariant/123
     const variantId = variant?.id?.split('/').pop();
     return {
       title: p.title,
       variantId,
       retailPrice: variant?.price || '0',
-      pharmacyPrice: variant?.metafield?.value || null, // null = no pharmacy price set
+      pharmacyPrice: p.localPrice?.value || null,
+      caseSize: p.caseSize?.value || null,
       upc: variant?.barcode || null,
       image: p.featuredImage?.url || null
     };
